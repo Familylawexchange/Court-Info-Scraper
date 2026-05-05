@@ -42,7 +42,7 @@ Open the scanner at:
 npm run scan
 ```
 
-The mock connector inserts clearly labeled `TEST DATA ONLY` raw results, including `docket_entry_title`, and creates review queue entries. Check results at:
+The mock connector inserts clearly labeled `TEST DATA ONLY` raw results, including `docket_entry_title`, and creates review queue entries. There is also a local smoke endpoint for the same schema path: `POST /api/admin/raw-results/docket-entry-title-smoke`, which inserts a mock raw result with `docket_entry_title` and enqueues it for review. Check results at:
 
 <http://localhost:3000/admin/raw-results>
 
@@ -80,6 +80,7 @@ Record Room AI is not reachable at http://localhost:5173. Start Record Room AI f
 - `/admin/documents` — document review if documents are stored locally.
 - `/admin/profiles` — local profile management if used.
 - `/public-upload` — optional public upload page; submissions remain private/pending by default.
+- `/public-search` — optional approved-public search alias; it excludes private/pending/rejected records and does not replace the Record Room AI app.
 
 ## Sending scanner results to Record Room AI
 

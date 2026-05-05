@@ -7,6 +7,8 @@ const DB_PATH = path.join(DATA_ROOT, 'database.sqlite');
 let db;
 
 const RAW_RESULT_COLUMNS = {
+  scanner_job_id: 'INTEGER',
+  source_id: 'INTEGER',
   source_name: 'TEXT',
   source_type: 'TEXT',
   source_category: 'TEXT',
@@ -109,6 +111,13 @@ function insert(table, data) {
   const result = run(`INSERT INTO ${table} (${columns}) VALUES (${values})`, params);
   return result.lastInsertRowid;
 }
+function buildNamedInsert(table, keys, data) {
+  const columns = keys.join(', ');
+  const values = keys.map(k => `@${k}`).join(', ');
+  const sql = `INSERT INTO ${table} (${columns}) VALUES (${values})`;
+  const params = Object.fromEntries(keys.map(k => [k, data[k] === undefined ? null : data[k]]));
+  return { sql, params, fields: keys, parameterNames: keys.map(k => `@${k}`) };
+}
 function normalizeRawResult(data) {
   const mapped = { ...data };
   if (mapped.title && !mapped.document_title) mapped.document_title = mapped.title;
@@ -123,15 +132,22 @@ function insertRawResult(data) {
   const normalized = normalizeRawResult(data || {});
   const columns = tableColumns('raw_results');
   const columnSet = new Set(columns);
-  const keys = Object.keys(normalized).filter(k => columnSet.has(k) && normalized[k] !== undefined);
+  const allowedKeys = Object.keys(RAW_RESULT_COLUMNS).filter(k => columnSet.has(k));
   const missingColumns = Object.keys(RAW_RESULT_COLUMNS).filter(k => !columnSet.has(k));
   const ignoredFields = Object.keys(normalized).filter(k => !columnSet.has(k));
+  const payload = Object.fromEntries(allowedKeys.map(k => [k, normalized[k] === undefined ? null : normalized[k]]));
+  const { sql, params, fields, parameterNames } = buildNamedInsert('raw_results', allowedKeys, payload);
+  const missingParameterNames = fields.filter(k => !(k in params));
   console.log('[raw_results:insert] table columns found:', columns.join(', '));
-  console.log('[raw_results:insert] insert fields being used:', keys.join(', '));
+  console.log('[raw_results:insert] SQL field names:', fields.join(', '));
+  console.log('[raw_results:insert] SQL named parameters:', parameterNames.join(', '));
+  console.log('[raw_results:insert] parameter object keys:', Object.keys(params).join(', '));
+  console.log('[raw_results:insert] missing parameter names:', missingParameterNames.join(', ') || 'none');
   console.log('[raw_results:insert] missing columns:', missingColumns.join(', ') || 'none');
   if (ignoredFields.length) console.log('[raw_results:insert] ignored extra payload fields:', ignoredFields.join(', '));
   try {
-    return insert('raw_results', Object.fromEntries(keys.map(k => [k, normalized[k]])));
+    const result = run(sql, params);
+    return result.lastInsertRowid;
   } catch (error) {
     console.error('[raw_results:insert] exact SQL error:', error.message);
     throw error;
@@ -172,7 +188,11 @@ function seedSources() {
       notes: s.notes,
       active: 1
     };
-    if (!existing) insert('sources', row);
+    if (!existing) {
+      insert('sources', row);
+    } else {
+      run(`UPDATE sources SET name = @name, source_id = @source_id, source_name = @source_name, source_category = @source_category, state = @state, county = @county, court = @court, jurisdiction = @jurisdiction, source_type = @source_type, access_method = @access_method, access_type = @access_type, automation_status = @automation_status, base_url = @base_url, api_available = @api_available, login_required = @login_required, paid_access = @paid_access, captcha_likely = @captcha_likely, scraping_allowed = @scraping_allowed, safe_to_run_boolean = @safe_to_run_boolean, robots_notes = @robots_notes, terms_notes = @terms_notes, rate_limit = @rate_limit, notes = @notes, active = @active WHERE id = @id`, { ...row, id: existing.id });
+    }
   }
 }
 module.exports = { DB_PATH, initDatabase, getDb, run, all, get, insert, insertRawResult, tableColumns, runStartupMigrations, RAW_RESULT_COLUMNS };
