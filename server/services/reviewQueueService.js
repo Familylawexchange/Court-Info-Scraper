@@ -1,6 +1,6 @@
 const db = require('../db/database');
-function enqueue(itemType, itemId, reason, priority = 'normal', reviewStatus = 'new result') {
-  return db.insert('review_queue', { item_type: itemType, item_id: itemId, reason, priority, review_status: reviewStatus });
+function enqueue(itemType, itemId, reason, priority = 'normal', reviewStatus = 'new result', visibility = 'admin only') {
+  return db.insert('review_queue', { item_type: itemType, item_id: itemId, reason, priority, review_status: reviewStatus, visibility });
 }
 function list(filters = {}) {
   const clauses = [];

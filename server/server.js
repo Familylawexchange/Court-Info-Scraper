@@ -1,60 +1,50 @@
+const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const http = require('node:http');
-const { URL } = require('node:url');
 const db = require('./db/database');
 const scannerService = require('./services/scannerService');
-const reviewQueue = require('./services/reviewQueueService');
-const extractionService = require('./services/extractionService');
 const manualImport = require('./services/manualImportService');
-const dedupe = require('./services/dedupeService');
-const searchIndex = require('./services/searchIndexService');
+const reviewQueue = require('./services/reviewQueueService');
 const profileService = require('./services/profileService');
 const claimService = require('./services/claimService');
 const aiSummary = require('./services/aiSummaryService');
+const searchIndex = require('./services/searchIndexService');
 const redaction = require('./services/redactionService');
+const extraction = require('./services/extractionService');
+const recordRoomClient = require('./services/recordRoomClient');
 const config = require('./config');
-
-const UPLOAD_DIR = path.join(config.DATA_ROOT, 'uploads');
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 db.initDatabase();
-function send(res, status, body, headers = {}) { const isString = typeof body === 'string'; res.writeHead(status, { 'Content-Type': isString ? 'text/html; charset=utf-8' : 'application/json', 'X-Admin-Auth-Placeholder': 'Configure real authentication before production.', ...headers }); res.end(isString ? body : JSON.stringify(body)); }
+function send(res, status, body, headers = {}) { res.writeHead(status, { 'Content-Type': typeof body === 'string' ? 'text/html; charset=utf-8' : 'application/json', 'X-Admin-Auth-Placeholder': 'Configure real authentication before production.', ...headers }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); }
 function readBody(req) { return new Promise((resolve, reject) => { let data=''; req.on('data', c => { data += c; if (data.length > 30 * 1024 * 1024) reject(new Error('Request too large')); }); req.on('end', () => { if (!data) return resolve({}); try { resolve(JSON.parse(data)); } catch { resolve(Object.fromEntries(new URLSearchParams(data))); } }); req.on('error', reject); }); }
-function page(title, mount, description) { return `<!doctype html><html><head><title>${title}</title><style>body{font-family:system-ui;margin:2rem;max-width:1200px}input,select,textarea{display:block;margin:.35rem 0;padding:.45rem;min-width:280px}label{display:block;font-weight:600;margin:.4rem 0}button{padding:.55rem .9rem;margin:.25rem}table{border-collapse:collapse;width:100%;margin-top:1rem}td,th{border:1px solid #ddd;padding:.4rem;vertical-align:top}.warn{background:#fff4d6;padding:1rem;border-left:4px solid #c97}</style></head><body><nav><a href="/admin/scanner">Admin Scanner</a> | <a href="/admin/raw-results">Raw Results</a> | <a href="/admin/research-leads">Research Leads</a> | <a href="/admin/review-queue">Review Queue</a> | <a href="/admin/documents">Documents</a> | <a href="/admin/profiles">Profiles</a> | <a href="/upload">Public Upload</a> | <a href="/search">Public Search</a></nav><h1>${title}</h1><p>${description}</p><div class="warn">Safety: records enter a review queue first. Public search excludes pending, private, sealed, confidential, rejected, and needs-redaction records.</div><div id="app" data-mount="${mount}"></div><script src="/src/pages/${mount}.jsx"></script></body></html>`; }
 function queryObj(url) { return Object.fromEntries(url.searchParams.entries()); }
-async function createDocumentFromJsonUpload(data, uploadMethod, leadId) {
-  if (!data.file_base64) return null;
-  manualImport.ensureNoPre1990(data.filing_date);
-  const allowed = ['.pdf','.docx','.txt','.jpg','.jpeg','.png','.csv'];
-  const original = data.file_name || 'upload.bin';
-  const ext = path.extname(original).toLowerCase();
-  if (!allowed.includes(ext)) throw new Error('Unsupported file type. Allowed: PDF, DOCX, TXT, JPG, PNG, CSV.');
-  const buffer = Buffer.from(String(data.file_base64).split(',').pop(), 'base64');
-  if (buffer.length > 25 * 1024 * 1024) throw new Error('File limit is 25 MB.');
-  const stored = `${Date.now()}-${Math.random().toString(16).slice(2)}${ext}`;
-  const filePath = path.join(UPLOAD_DIR, stored);
-  fs.writeFileSync(filePath, buffer);
-  const source = db.get('SELECT * FROM sources WHERE lower(name) = lower(@name)', { name: data.source_name || 'Other' }) || {};
-  const docId = db.insert('documents', { source_id: source.id, file_name: stored, original_file_name: original, file_path: filePath, file_type: data.file_type || 'application/octet-stream', file_size: buffer.length, document_hash: dedupe.documentHash(buffer), document_title: data.document_title || original, document_type: data.document_type, source_type: data.source_type || source.source_type || 'user-submitted document', source_name: data.source_name || 'Public submission', source_url: data.source_url, case_name: data.case_name, case_number: data.case_number, court: data.court, county: data.county, state: data.state, filing_date: data.filing_date, event_date: data.event_date, upload_method: uploadMethod, uploader_name: data.uploader_name, uploader_email: data.uploader_email, review_status: data.review_status || 'needs manual verification', visibility: 'pending', redaction_status: 'needs review', extraction_status: 'pending' });
-  reviewQueue.enqueue('document', docId, leadId ? `Document uploaded with research lead ${leadId}.` : 'Uploaded document requires review, redaction screening, and approval.', 'normal', 'needs manual verification');
-  await extractionService.extractDocument(docId);
-  return docId;
+function page(title, mount, description) { return `<!doctype html><html><head><title>${title}</title><style>body{font-family:Inter,system-ui,sans-serif;margin:0;background:#f6f7fb;color:#172033}.wrap{max-width:1400px;margin:auto;padding:2rem}nav{background:#101827;color:#fff;padding:1rem 2rem;position:sticky;top:0;z-index:1}nav a{color:#dce7ff;margin-right:1rem;text-decoration:none}input,select,textarea{box-sizing:border-box;display:block;margin:.35rem 0 .8rem;padding:.65rem;min-width:280px;width:100%;border:1px solid #cbd5e1;border-radius:8px;background:#fff}select.big{min-height:3rem;font-size:1rem}label{display:block;font-weight:700;margin:.45rem 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}.card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:1rem;box-shadow:0 4px 18px #0f172a0d;margin:1rem 0}.warn{background:#fff7ed;padding:1rem;border-left:5px solid #f97316;border-radius:8px}.danger{background:#fef2f2;border-left-color:#ef4444}.ok{background:#ecfdf5;border-left-color:#10b981}.badge{display:inline-block;border-radius:999px;padding:.2rem .55rem;background:#e0e7ff;color:#3730a3;margin:.1rem;font-size:.8rem}button{padding:.65rem .9rem;margin:.25rem;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}button.secondary{background:#475569}table{border-collapse:collapse;width:100%;margin-top:1rem;background:#fff}td,th{border:1px solid #e2e8f0;padding:.5rem;vertical-align:top;text-align:left}pre{white-space:pre-wrap;background:#0f172a;color:#d1fae5;padding:1rem;border-radius:8px;overflow:auto}.muted{color:#64748b}</style></head><body><nav><a href="/admin/scanner">Admin Scanner</a><a href="/admin/raw-results">Raw Results</a><a href="/admin/research-leads">Research Leads</a><a href="/admin/review">Review Queue</a><a href="/admin/documents">Documents</a><a href="/admin/profiles">Profiles</a><a href="/public-upload">Public Upload</a><a href="/search">Public Search</a></nav><main class="wrap"><h1>${title}</h1><p>${description}</p><div class="warn">Scanner results are research leads. Results enter review first. Public search excludes pending, private, sealed, confidential, rejected, and needs-redaction records. Commercial platforms and account-based court systems must be handled through manual import, licensed export, or approved API access.</div><div id="app" data-mount="${mount}"></div><script src="/src/pages/${mount}.jsx"></script></main></body></html>`; }
+async function createDocumentFromJsonUpload(body, uploadMethod, rawResultId) {
+  manualImport.ensureNoPre1990(body.filing_date);
+  const uploadsDir = path.join(config.DATA_ROOT, 'uploads'); fs.mkdirSync(uploadsDir, { recursive: true }); let filePath=null, fileSize=0;
+  if (body.file_base64 && body.file_name) { const allowed = ['.pdf','.docx','.txt','.jpg','.jpeg','.png','.csv']; const original = body.file_name || 'upload.bin'; const ext = path.extname(original).toLowerCase(); if (!allowed.includes(ext)) throw new Error('Unsupported file type. Allowed: PDF, DOCX, TXT, JPG, PNG, CSV.'); const data = Buffer.from(String(body.file_base64).split(',').pop(), 'base64'); if (data.length > 25 * 1024 * 1024) throw new Error('File limit is 25 MB.'); filePath = path.join(uploadsDir, `${Date.now()}-${Math.random().toString(16).slice(2)}-${original}`); fs.writeFileSync(filePath, data); fileSize=data.length; }
+  const documentId = db.insert('documents', { raw_result_id: rawResultId, file_name: body.file_name, original_file_name: body.file_name, file_path: filePath, file_type: body.file_type, file_size: fileSize, document_title: body.document_title, source_type: body.source_type, source_name: body.source_name, source_url: body.source_url, case_name: body.case_name, case_number: body.case_number, court: body.court, county: body.county, state: body.state, filing_date: body.filing_date, upload_method: uploadMethod, uploader_name: body.uploader_name, uploader_email: body.uploader_email, review_status: 'needs manual verification', visibility: 'pending', redaction_status: 'needs review' });
+  reviewQueue.enqueue('document', documentId, `${uploadMethod} requires admin review before publication.`, 'normal', 'new result', 'admin only');
+  if (body.docket_entry_text) extraction.saveExtractedText(documentId, body.docket_entry_text, 'manual/json upload', 0.5);
+  return documentId;
 }
 async function handler(req, res) {
-  const url = new URL(req.url, 'http://localhost');
+  const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (req.method === 'GET' && url.pathname.startsWith('/src/')) { const file = path.join(process.cwd(), url.pathname); if (!file.startsWith(process.cwd())) return send(res, 403, 'Forbidden'); return fs.existsSync(file) ? send(res, 200, fs.readFileSync(file, 'utf8'), { 'Content-Type':'application/javascript' }) : send(res, 404, 'Not found'); }
     if (url.pathname === '/') return send(res, 302, '', { Location: '/admin/scanner' });
-    if (url.pathname.startsWith('/src/')) { const file = path.join(__dirname, '..', url.pathname); if (!file.startsWith(path.join(__dirname, '..', 'src')) || !fs.existsSync(file)) return send(res, 404, 'Not found'); res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' }); return res.end(fs.readFileSync(file)); }
-    const pages = { '/admin/scanner':['Admin Scanner','AdminScanner','Run admin-initiated API/configured scanner jobs.'], '/admin/raw-results':['Raw Results','RawResults','Review scanner results before public use.'], '/admin/research-leads':['Research Leads','ResearchLeads','Manual/import workflow for Trellis, Westlaw, Lexis, UniCourt, Docket Alarm, PACER, official sources, news, and other leads.'], '/admin/review-queue':['Review Queue','ReviewQueue','All scanned/imported records wait here before publication.'], '/admin/documents':['Document Review','DocumentReview','Review uploaded files, extraction, visibility, and redaction.'], '/admin/profiles':['Profile Management','ProfileManager','Manage profiles and source-bound summaries.'], '/upload':['Public Upload Portal','UploadPortal','Public submissions are private/pending by default.'], '/search':['Public Search','PublicSearch','Search approved public records only.'] };
+    const pages = { '/admin/scanner':['Admin Scanner','AdminScanner','Run admin-initiated connector/API/manual scanner jobs.'], '/admin/raw-results':['Raw Results','RawResults','Review scanner results before public use.'], '/admin/research-leads':['Research Leads','ResearchLeads','Manual/import workflow for commercial platforms, PACER, court clerk results, screenshots, PDFs, CSV exports, and copied docket entries.'], '/admin/review':['Review Queue','ReviewQueue','All scanned/imported records wait here before publication.'], '/admin/review-queue':['Review Queue','ReviewQueue','All scanned/imported records wait here before publication.'], '/admin/documents':['Document Review','DocumentReview','Review uploaded files, extraction, visibility, and redaction.'], '/admin/profiles':['Profile Management','ProfileManager','Manage profiles and source-bound summaries.'], '/public-upload':['Public Upload Portal','UploadPortal','Public submissions are private/pending by default.'], '/upload':['Public Upload Portal','UploadPortal','Public submissions are private/pending by default.'], '/search':['Public Search','PublicSearch','Search approved public records only.'] };
     if (pages[url.pathname]) return send(res, 200, page(...pages[url.pathname]));
     if (/^\/profile\/\d+/.test(url.pathname)) return send(res, 200, page('Public Profile','PublicProfile','Display approved public profile information only.'));
     if (req.method === 'GET' && url.pathname === '/api/config') return send(res, 200, config);
-    if (req.method === 'GET' && url.pathname === '/api/sources') return send(res, 200, db.all('SELECT * FROM sources WHERE active = 1 ORDER BY name'));
+    if (req.method === 'GET' && url.pathname === '/api/sources') return send(res, 200, db.all('SELECT * FROM sources WHERE active = 1 ORDER BY source_category, name'));
     if (req.method === 'GET' && url.pathname === '/api/keyword-groups') return send(res, 200, db.all('SELECT * FROM keyword_groups ORDER BY name'));
+    if (req.method === 'GET' && url.pathname === '/api/admin/record-room/status') return send(res, 200, await recordRoomClient.checkConnection());
+    if (req.method === 'POST' && url.pathname === '/api/admin/record-room/send-new') { const rows = db.all("SELECT * FROM raw_results WHERE review_status = 'new result' ORDER BY created_at DESC LIMIT 500"); return send(res, 200, await recordRoomClient.sendResults(rows)); }
+    let m = url.pathname.match(/^\/api\/admin\/raw-results\/(\d+)\/send-record-room$/); if (req.method === 'POST' && m) return send(res, 200, await recordRoomClient.sendResults([db.get('SELECT * FROM raw_results WHERE id = @id', { id:m[1] })]));
     if (req.method === 'POST' && url.pathname === '/api/admin/scanner-jobs') return send(res, 200, await scannerService.runScannerJob({ ...(await readBody(req)), created_by: 'admin' }));
     if (req.method === 'GET' && url.pathname === '/api/admin/scanner-jobs') return send(res, 200, scannerService.listJobs());
     if (req.method === 'GET' && url.pathname === '/api/admin/raw-results') return send(res, 200, db.all('SELECT * FROM raw_results ORDER BY created_at DESC LIMIT 500'));
-    let m = url.pathname.match(/^\/api\/admin\/raw-results\/(\d+)\/status$/); if (req.method === 'PATCH' && m) { const body = await readBody(req); db.run('UPDATE raw_results SET review_status = @status, notes = COALESCE(@notes, notes) WHERE id = @id', { id:m[1], status:body.review_status, notes:body.notes }); return send(res, 200, { ok:true }); }
+    m = url.pathname.match(/^\/api\/admin\/raw-results\/(\d+)\/status$/); if (req.method === 'PATCH' && m) { const body = await readBody(req); db.run('UPDATE raw_results SET review_status = @status, notes = COALESCE(@notes, notes) WHERE id = @id', { id:m[1], status:body.review_status, notes:body.notes }); return send(res, 200, { ok:true }); }
     if (req.method === 'GET' && url.pathname === '/api/admin/review-queue') return send(res, 200, reviewQueue.list(queryObj(url)));
     m = url.pathname.match(/^\/api\/admin\/review-queue\/(\d+)\/status$/); if (req.method === 'PATCH' && m) { const body = await readBody(req); reviewQueue.updateStatus(m[1], body.review_status, body.notes); return send(res, 200, { ok:true }); }
     if (req.method === 'POST' && url.pathname === '/api/admin/research-leads') { const body = await readBody(req); const leadId = manualImport.createResearchLead(body); const documentId = await createDocumentFromJsonUpload(body, 'research lead manual upload', leadId); return send(res, 200, { leadId, documentId }); }
@@ -72,6 +62,6 @@ async function handler(req, res) {
     return send(res, 404, { error:'Not found' });
   } catch (error) { return send(res, 400, { error: error.message }); }
 }
-function start(port = process.env.PORT || 3000) { const server = http.createServer(handler); return server.listen(port, () => console.log(`The Record Room AI running at http://localhost:${port}`)); }
+function start(port = process.env.SCANNER_PORT || process.env.PORT || 3000) { const server = http.createServer(handler); return server.listen(port, () => console.log(`Court-Info-Scraper running at http://localhost:${port}`)); }
 if (require.main === module) start();
 module.exports = { start, handler };

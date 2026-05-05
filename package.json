@@ -6,6 +6,9 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
+    "dev": "node server.js",
+    "scan": "node src/scan.js",
+    "test:record-room": "node src/testRecordRoomImport.js",
     "test": "node --test"
   }
 }
