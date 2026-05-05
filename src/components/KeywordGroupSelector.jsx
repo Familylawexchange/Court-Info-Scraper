@@ -1,0 +1,1 @@
+window.KeywordGroupSelector = async function KeywordGroupSelector(name='keyword_group') { const groups = await fetch('/api/keyword-groups').then(r=>r.json()); return `<select name="${name}">${groups.map(g=>`<option>${g.name}</option>`).join('')}</select>`; };

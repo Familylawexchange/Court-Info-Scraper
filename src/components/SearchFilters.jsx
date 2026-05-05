@@ -1,0 +1,1 @@
+window.SearchFilters = function SearchFilters() { return `<input name="q" placeholder="keyword/name"><input name="state" placeholder="state"><input name="county" placeholder="county"><input name="court" placeholder="court"><input name="source_type" placeholder="source type">`; };

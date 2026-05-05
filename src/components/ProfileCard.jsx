@@ -1,0 +1,1 @@
+window.ProfileCard = function ProfileCard(p) { return `<article><h3>${p.name}</h3><p>${p.role || ''} · ${p.court_or_office || p.firm_or_agency || ''} · ${p.county || ''} ${p.state || ''}</p><p>${p.profile_status || 'new profile'} · ${p.visibility || 'pending'}</p></article>`; };

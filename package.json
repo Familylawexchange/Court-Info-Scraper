@@ -1,0 +1,11 @@
+{
+  "name": "record-room-ai-legal-records-intake",
+  "version": "0.1.0",
+  "description": "Source-labeled legal records scanner and research intake system for The Record Room AI.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
