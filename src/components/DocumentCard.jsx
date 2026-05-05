@@ -1,0 +1,1 @@
+window.DocumentCard = function DocumentCard(d) { return `<article><h3>${d.document_title || d.original_file_name}</h3><p>${d.case_name || ''}</p><p>${d.source_name || ''} · ${d.review_status} · ${d.visibility} · ${d.redaction_status}</p></article>`; };

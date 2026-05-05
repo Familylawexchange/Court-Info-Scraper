@@ -1,0 +1,1 @@
+(async function(){const rows=await fetch('/api/admin/review-queue').then(r=>r.json());document.getElementById('app').innerHTML=`<table><tr><th>ID</th><th>Type</th><th>Item</th><th>Status</th><th>Reason</th></tr>${rows.map(r=>`<tr><td>${r.id}</td><td>${r.item_type}</td><td>${r.item_id}</td><td>${r.review_status}</td><td>${r.reason||''}</td></tr>`)}</table>`;})();
