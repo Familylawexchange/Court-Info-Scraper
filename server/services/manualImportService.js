@@ -16,7 +16,7 @@ function leadToRawResult(id) {
   const lead = db.get('SELECT * FROM research_leads WHERE id = @id', { id });
   if (!lead) throw new Error('Research lead not found');
   const source = db.get('SELECT * FROM sources WHERE lower(name) = lower(@name)', { name: lead.source_name }) || {};
-  const rawId = db.insert('raw_results', {
+  const rawId = db.insertRawResult({
     source_id: source.id,
     source_name: lead.source_name,
     state: lead.state,
@@ -36,7 +36,7 @@ function leadToRawResult(id) {
     review_status: lead.status || 'needs official source verification',
     notes: `Converted from research lead ${id}. ${lead.notes || ''}`
   });
-  reviewQueue.enqueue('raw_result', rawId, 'Converted from research lead; review required.', 'normal', 'needs official source verification');
+  reviewQueue.enqueue('raw_result', rawId, 'Converted from research lead; review required.', 'normal', 'needs official source verification', 'admin only');
   return rawId;
 }
 module.exports = { createResearchLead, leadToRawResult, ensureNoPre1990 };
